@@ -5,9 +5,6 @@ import (
 )
 
 func main() {
-	server := server.UDPServer{
-		Port: 5000,
-		IP:   "0.0.0.0",
-	}
+	server := server.Init("0.0.0.0", 5000)
 	server.Start()
 }
