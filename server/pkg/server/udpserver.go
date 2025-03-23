@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"snake-nvim.lepton9/pkg/player"
+	"strings"
 	"sync"
 )
 
@@ -40,9 +41,11 @@ func (s *UDPServer) Start() {
 	defer s.conn.Close()
 
 	fmt.Printf("UDP server listening on %s:%d\n", s.ip, s.port)
+	s.run()
+}
 
+func (s *UDPServer) run() {
 	buffer := make([]byte, 1024)
-
 	for {
 		n, remoteAddr, err := s.conn.ReadFromUDP(buffer)
 		if err != nil {
@@ -50,14 +53,39 @@ func (s *UDPServer) Start() {
 			continue
 		}
 
-		fmt.Printf("Received %d bytes from %s: %s\n", n, remoteAddr, string(buffer[:n]))
+		fmt.Printf("%s > %d bytes: %s\n", remoteAddr, n, string(buffer[:n]))
 
-		if !s.IsConnectedAddr(remoteAddr) {
+		// TODO: make a message format
+		// parse message
+		message := string(buffer[:n])
+		parts := strings.SplitN(message, ",", 2)
+		if len(parts) != 2 {
+			fmt.Println("Invalid message format")
+			continue
+		}
+
+		playerID := parts[0]
+		data := parts[1]
+
+		// New connection
+		if playerID == "" && !s.IsConnectedAddr(remoteAddr) {
 			newPlayer := s.Connect(remoteAddr)
 			fmt.Printf("New connection: %s, ID: %s\n", remoteAddr, newPlayer.Id())
 			s.Send(remoteAddr, newPlayer.Id())
-		} else {
-			s.Send(remoteAddr, string(buffer[:n]))
+		} else { // Old connection
+			s.mu.Lock()
+			player, exists := s.connectedPlayers[playerID]
+			if exists {
+				player.UpdateLastSeen()
+				s.connectedPlayers[playerID] = player
+			}
+			s.mu.Unlock()
+
+			if !exists || player.Address.String() != remoteAddr.String() {
+				fmt.Println("Invalid player ID or address")
+				continue
+			}
+			s.Send(remoteAddr, "Success: "+data)
 		}
 	}
 }
@@ -80,6 +108,16 @@ func (s *UDPServer) IsConnectedAddr(addr *net.UDPAddr) bool {
 		}
 	}
 	return false
+}
+
+func (s *UDPServer) GetPlayer(id string) *player.Player {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	player, exists := s.connectedPlayers[id]
+	if !exists {
+		return nil
+	}
+	return &player
 }
 
 func (s *UDPServer) Connect(addr *net.UDPAddr) *player.Player {
