@@ -6,6 +6,7 @@ import (
 	"snake-nvim.lepton9/pkg/player"
 	"strings"
 	"sync"
+	"time"
 )
 
 type UDPServer struct {
@@ -13,6 +14,7 @@ type UDPServer struct {
 	ip               string
 	conn             *net.UDPConn
 	connectedPlayers map[string]player.Player
+	timeoutDuration  time.Duration
 	mu               sync.Mutex
 }
 
@@ -22,6 +24,7 @@ func Init(ip string, port int) *UDPServer {
 		ip:               ip,
 		conn:             nil,
 		connectedPlayers: make(map[string]player.Player),
+		timeoutDuration:  60 * time.Second,
 	}
 	return &server
 }
@@ -39,6 +42,8 @@ func (s *UDPServer) Start() {
 		return
 	}
 	defer s.conn.Close()
+
+	go s.checkTimeouts()
 
 	fmt.Printf("UDP server listening on %s:%d\n", s.ip, s.port)
 	s.run()
@@ -126,4 +131,21 @@ func (s *UDPServer) Connect(addr *net.UDPAddr) *player.Player {
 	newPlayer := player.New(addr)
 	s.connectedPlayers[newPlayer.Id()] = newPlayer
 	return &newPlayer
+}
+
+func (s *UDPServer) checkTimeouts() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		for id, player := range s.connectedPlayers {
+			if time.Since(player.LastSeen) > s.timeoutDuration {
+				fmt.Printf("Player %s timed out\n", id)
+				s.Send(player.Address, "Connection timed out..")
+				delete(s.connectedPlayers, id)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
