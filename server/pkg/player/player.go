@@ -9,6 +9,7 @@ import (
 type Player struct {
 	Address  *net.UDPAddr
 	id       uint32
+	Name     string
 	LastSeen time.Time
 }
 
@@ -18,6 +19,7 @@ func New(addr *net.UDPAddr) Player {
 	player := Player{
 		Address:  addr,
 		id:       generateID(),
+		Name:     "",
 		LastSeen: time.Now(),
 	}
 	return player

@@ -60,41 +60,44 @@ func (s *UDPServer) run() {
 
 		fmt.Printf("%s > %d bytes: %s\n", remoteAddr, n, string(buffer[:n]))
 
-		packet, err := packet.DecodePacket(buffer[:n])
+		packetDecoded, err := packet.DecodePacket(buffer[:n])
 		if err != nil {
-			fmt.Println("Invalid message format")
+			fmt.Println("Invalid packet format: ", err.Error())
 			continue
 		}
 
-		playerID := packet.PlayerID
-		data := packet.Data
+		s.handlePacket(&packetDecoded, remoteAddr)
+	}
+}
 
-		// New connection
-		if packet.Type == 0 && !s.IsConnectedAddr(remoteAddr) {
-			newPlayer := s.Connect(remoteAddr)
-			fmt.Printf("New connection: %s, ID: %d\n", remoteAddr, newPlayer.Id())
-			s.Send(remoteAddr, fmt.Sprintf("%d", newPlayer.Id()))
-		} else { // Old connection
-			s.mu.Lock()
-			player, exists := s.connectedPlayers[playerID]
-			if exists {
-				player.UpdateLastSeen()
-				s.connectedPlayers[playerID] = player
-			}
-			s.mu.Unlock()
-
-			if !exists {
-				fmt.Println("Invalid player ID")
-				continue
-			}
-			// TODO: maybe useless
-			if player.Address.String() != remoteAddr.String() {
-				fmt.Println("Invalid address")
-				continue
-			}
-			s.Send(remoteAddr, "Success: "+string(data))
+func (s *UDPServer) handlePacket(p *packet.Packet, addr *net.UDPAddr) error {
+	if p.Type == packet.JOIN && !s.IsConnectedAddr(addr) {
+		newPlayer := s.Connect(addr)
+		newPlayer.Name = string(p.Data)
+		fmt.Printf("New connection: %s, ID: %d, Name: %s\n", addr, newPlayer.Id(), newPlayer.Name)
+		s.Send(addr, fmt.Sprintf("%d", newPlayer.Id()))
+	} else {
+		player := s.GetPlayer(p.PlayerID)
+		if player == nil {
+			return fmt.Errorf("No player connected with id: %d", p.PlayerID)
+		}
+		switch p.Type {
+		case packet.LEAVE:
+			leave := packet.MakePacket(packet.LEAVE, []byte("Disconnecting"))
+			s.Send(addr, string(packet.EncodePacket(leave)))
+			s.DisconnectPlayer(player.Id())
+			break
+		case packet.MOVE:
+			s.Send(addr, "Success: "+string(p.Data))
+			break
+		case packet.PING:
+			s.Send(addr, "Success: "+string(p.Data))
+			break
+		default:
+			return fmt.Errorf("unknown packet type: %d", p.Type)
 		}
 	}
+	return nil
 }
 
 func (s *UDPServer) Send(addr *net.UDPAddr, msg string) bool {
@@ -121,10 +124,16 @@ func (s *UDPServer) GetPlayer(id uint32) *player.Player {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	player, exists := s.connectedPlayers[id]
-	if !exists {
-		return nil
+	if exists {
+		player.UpdateLastSeen()
+		s.connectedPlayers[id] = player
+		return &player
 	}
-	return &player
+	return nil
+}
+
+func (s *UDPServer) DisconnectPlayer(id uint32) {
+	delete(s.connectedPlayers, id)
 }
 
 func (s *UDPServer) Connect(addr *net.UDPAddr) *player.Player {
@@ -145,7 +154,7 @@ func (s *UDPServer) checkTimeouts() {
 			if time.Since(player.LastSeen) > s.timeoutDuration {
 				fmt.Printf("Player %d timed out\n", id)
 				s.Send(player.Address, "Connection timed out..")
-				delete(s.connectedPlayers, id)
+				s.DisconnectPlayer(id)
 			}
 		}
 		s.mu.Unlock()
