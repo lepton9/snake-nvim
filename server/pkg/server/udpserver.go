@@ -3,8 +3,8 @@ package server
 import (
 	"fmt"
 	"net"
+	"snake-nvim.lepton9/pkg/packet"
 	"snake-nvim.lepton9/pkg/player"
-	"strings"
 	"sync"
 	"time"
 )
@@ -60,30 +60,17 @@ func (s *UDPServer) run() {
 
 		fmt.Printf("%s > %d bytes: %s\n", remoteAddr, n, string(buffer[:n]))
 
-		// TODO: make a message format
-		// parse message
-		message := string(buffer[:n])
-		parts := strings.SplitN(message, ",", 2)
-		if len(parts) != 2 {
+		packet, err := packet.DecodePacket(buffer[:n])
+		if err != nil {
 			fmt.Println("Invalid message format")
 			continue
 		}
 
-		playerIDStr := parts[0]
-		data := parts[1]
-
-		// Convert playerIDStr to uint32
-		var playerID uint32
-		if playerIDStr != "" {
-			_, err := fmt.Sscanf(playerIDStr, "%d", &playerID)
-			if err != nil {
-				fmt.Println("Invalid player ID format")
-				continue
-			}
-		}
+		playerID := packet.PlayerID
+		data := packet.Data
 
 		// New connection
-		if playerIDStr == "" && !s.IsConnectedAddr(remoteAddr) {
+		if packet.Type == 0 && !s.IsConnectedAddr(remoteAddr) {
 			newPlayer := s.Connect(remoteAddr)
 			fmt.Printf("New connection: %s, ID: %d\n", remoteAddr, newPlayer.Id())
 			s.Send(remoteAddr, fmt.Sprintf("%d", newPlayer.Id()))
@@ -96,11 +83,16 @@ func (s *UDPServer) run() {
 			}
 			s.mu.Unlock()
 
-			if !exists || player.Address.String() != remoteAddr.String() {
-				fmt.Println("Invalid player ID or address")
+			if !exists {
+				fmt.Println("Invalid player ID")
 				continue
 			}
-			s.Send(remoteAddr, "Success: "+data)
+			// TODO: maybe useless
+			if player.Address.String() != remoteAddr.String() {
+				fmt.Println("Invalid address")
+				continue
+			}
+			s.Send(remoteAddr, "Success: "+string(data))
 		}
 	}
 }
