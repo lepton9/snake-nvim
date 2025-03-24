@@ -13,7 +13,7 @@ type UDPServer struct {
 	port             int
 	ip               string
 	conn             *net.UDPConn
-	connectedPlayers map[string]player.Player
+	connectedPlayers map[uint32]player.Player
 	timeoutDuration  time.Duration
 	mu               sync.Mutex
 }
@@ -23,7 +23,7 @@ func Init(ip string, port int) *UDPServer {
 		port:             port,
 		ip:               ip,
 		conn:             nil,
-		connectedPlayers: make(map[string]player.Player),
+		connectedPlayers: make(map[uint32]player.Player),
 		timeoutDuration:  60 * time.Second,
 	}
 	return &server
@@ -69,14 +69,24 @@ func (s *UDPServer) run() {
 			continue
 		}
 
-		playerID := parts[0]
+		playerIDStr := parts[0]
 		data := parts[1]
 
+		// Convert playerIDStr to uint32
+		var playerID uint32
+		if playerIDStr != "" {
+			_, err := fmt.Sscanf(playerIDStr, "%d", &playerID)
+			if err != nil {
+				fmt.Println("Invalid player ID format")
+				continue
+			}
+		}
+
 		// New connection
-		if playerID == "" && !s.IsConnectedAddr(remoteAddr) {
+		if playerIDStr == "" && !s.IsConnectedAddr(remoteAddr) {
 			newPlayer := s.Connect(remoteAddr)
-			fmt.Printf("New connection: %s, ID: %s\n", remoteAddr, newPlayer.Id())
-			s.Send(remoteAddr, newPlayer.Id())
+			fmt.Printf("New connection: %s, ID: %d\n", remoteAddr, newPlayer.Id())
+			s.Send(remoteAddr, fmt.Sprintf("%d", newPlayer.Id()))
 		} else { // Old connection
 			s.mu.Lock()
 			player, exists := s.connectedPlayers[playerID]
@@ -115,7 +125,7 @@ func (s *UDPServer) IsConnectedAddr(addr *net.UDPAddr) bool {
 	return false
 }
 
-func (s *UDPServer) GetPlayer(id string) *player.Player {
+func (s *UDPServer) GetPlayer(id uint32) *player.Player {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	player, exists := s.connectedPlayers[id]
@@ -141,7 +151,7 @@ func (s *UDPServer) checkTimeouts() {
 		s.mu.Lock()
 		for id, player := range s.connectedPlayers {
 			if time.Since(player.LastSeen) > s.timeoutDuration {
-				fmt.Printf("Player %s timed out\n", id)
+				fmt.Printf("Player %d timed out\n", id)
 				s.Send(player.Address, "Connection timed out..")
 				delete(s.connectedPlayers, id)
 			}

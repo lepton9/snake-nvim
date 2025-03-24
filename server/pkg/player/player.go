@@ -1,32 +1,34 @@
 package player
 
 import (
-	"github.com/google/uuid"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
 type Player struct {
 	Address  *net.UDPAddr
-	id       string
+	id       uint32
 	LastSeen time.Time
 }
+
+var idCounter uint32
 
 func New(addr *net.UDPAddr) Player {
 	player := Player{
 		Address:  addr,
-		id:       generateUUID(),
+		id:       generateID(),
 		LastSeen: time.Now(),
 	}
 	return player
 }
 
-func (p *Player) Id() string {
+func (p *Player) Id() uint32 {
 	return p.id
 }
 
-func generateUUID() string {
-	return uuid.New().String()
+func generateID() uint32 {
+	return atomic.AddUint32(&idCounter, 1)
 }
 
 func (p *Player) UpdateLastSeen() {
